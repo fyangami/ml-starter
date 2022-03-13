@@ -1,5 +1,6 @@
 from numpy import ndarray
 import numpy as np
+from utils.data import one_hot_y
 
 
 class LogisticClassifier:
@@ -86,3 +87,70 @@ class MultiLogisticClassifier:
     
     def losses(self, idx) -> ndarray:
         return self.models[idx].losses
+
+
+class SoftmaxR:
+
+    def __init__(self, eta=1e-3, epochs=50, batch_size=50, seed=1024) -> None:
+        self.eta = eta
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.__seed = seed
+    
+    def liner_regression(self, x):
+        return x.dot(self.w) + self.b
+    
+    def softmax(self, logits):
+        exp = np.exp(logits)
+        return exp / np.sum(exp, axis=1, keepdims=True)
+    
+    def net(self, x):
+        return self.softmax(self.liner_regression(x))
+    
+    def loss(self, y_hat, y):
+        y_hat = np.clip(y_hat, 1e-9, 1.)
+        return -np.sum(one_hot_y(y) * np.log(y_hat), axis=1, keepdims=True)
+
+    def gradients(self, y_hat, y, x):
+        return x.T.dot(y_hat - y), (y_hat - y)
+    
+    def accuracy(self, y_hat, y):
+        return ((np.argmax(y_hat, axis=1) == np.argmax(y, axis=1)).sum()) / len(y)
+    
+    def fit(self, x: ndarray, y: ndarray, tx: ndarray, ty: ndarray) -> None:
+        from utils.data import data_genterator, one_hot_y
+        # y = one_hot_y(y)
+        # ty = one_hot_y(ty)
+        n_features = x.shape[1]
+        n_class = y.shape[1]
+        assert y.shape[1] == ty.shape[1]
+        np.random.seed(self.next_seed())
+        self.w = np.random.randn(n_features, n_class)
+        self.b = np.zeros(1)
+        self.losses = list()
+        self.tlosses = list()
+        for epoch in range(self.epochs):
+            for batch_x, batch_y in data_genterator(x, y, self.next_seed(), self.batch_size):
+                y_hat = self.net(batch_x)
+                assert batch_y.shape == y_hat.shape
+                dw, db = self.gradients(y_hat, batch_y, batch_x)
+                self.w = self.w - self.eta * dw.mean(axis=0, keepdims=True)
+                self.b = self.b - self.eta * db.mean()
+            y_hat = self.net(x)
+            ty_hat = self.net(tx)
+            l = self.loss(y_hat, y)
+            self.losses.append(l.mean())
+            tl = self.loss(ty_hat, ty)
+            self.tlosses.append(tl.mean())
+            acc = self.accuracy(y_hat, y)
+            tacc = self.accuracy(ty_hat, ty)
+            print('epoch[%d] === loss: %.6f === test loss: %.6f === train acc: %.6f === test acc: %.6f' % 
+                (epoch + 1, l.mean(), tl.mean(), acc, tacc))
+    
+    def predict(self, x):
+        return np.argmax(self.net(x), axis=1)
+
+    def next_seed(self):
+        seed = self.__seed
+        self.__seed += 1
+        return seed
