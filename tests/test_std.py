@@ -4,7 +4,7 @@ if __name__ == "__main__":
     import numpy as np
     import pandas as pd
     import sys
-    sys.path.append("/home/fyang/code/ml/ml-starter")
+    sys.path.append("../../")
     from utils.preprocess import std
     data = pd.read_csv("../kaggle/song-popularity/song_data.csv").to_numpy()
     data_1 = std(data[:, 1:])
