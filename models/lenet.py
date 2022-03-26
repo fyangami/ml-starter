@@ -17,11 +17,11 @@ class LeNet(NN):
         from math import ceil
         flatten_in = ceil(input_shape[0] / 2 / 2) * ceil(input_shape[1] / 2 / 2) * 16
         self.dense_1 = tf.Variable(initial_value=initializer(shape=(flatten_in, 120)))
-        self.dense_1_bias = tf.Variable(tf.zeros(shape=(1,)));
+        self.dense_1_bias = tf.Variable(tf.zeros(shape=(120,)));
         self.dense_2 = tf.Variable(initial_value=initializer(shape=(120, 84)))
-        self.dense_2_bias = tf.Variable(tf.zeros(shape=(1,)));
+        self.dense_2_bias = tf.Variable(tf.zeros(shape=(84,)));
         self.dense_3 = tf.Variable(initial_value=initializer(shape=(84, output)))
-        self.dense_3_bias = tf.Variable(tf.zeros(shape=(1,)));
+        self.dense_3_bias = tf.Variable(tf.zeros(shape=(output,)));
         self.weights += (
             self.kernel_1, 
             self.kernel_1_bias, 
