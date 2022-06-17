@@ -4,3 +4,9 @@
 *.tar.gz
 *.gz
 *.xz
+
+**/dist
+
+**/build
+
+**/*egg-info
