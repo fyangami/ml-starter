@@ -39,6 +39,8 @@ def flatten():
 
 def dense(n_out):
     def _init(n_in, rng=random_key()):
+        if isinstance(n_in, tuple):
+            n_in = sum(n_in)
         w_key, b_key = jax.random.split(rng)
         return n_out, dict(w=jax.random.normal(w_key, (n_in, n_out)),
                     b=jax.random.normal(b_key, (n_out, )))
