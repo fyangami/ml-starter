@@ -1,4 +1,6 @@
 from functools import partial
+
+from jaxnn.utils import random_key
 from . import nn
 import jax
 
@@ -6,22 +8,23 @@ import jax
 class Model:
     def __init__(self, layers) -> None:
         self._init_fn, self._call_fn = nn.net(layers=layers)
+        self.state = None
 
 
-    def fit(self, data_loader, optimizer, loss_fn, epochs=1, *args, **kwargs):
+    def fit(self, data_loader, optimizer, loss_fn, epochs=1, rng=random_key(), *args, **kwargs):
         self.losses = []
         self.loss_fn = loss_fn
         self.optimizer = optimizer
         for epoch in range(epochs):
             train_iter, test_data = next(data_loader)
             for (x, y) in train_iter:
-                loss = self.step(x, y, optimizer, loss_fn)
+                loss = self.step(x, y, rng)
                 self.losses.append(loss)
             print(f'epoch: [{epoch + 1}\\{epochs} -- loss: {loss:<.3f}')
 
-    def step(self, x, y, *args, **kwargs):
+    def step(self, x, y, rng):
         if self.state is None:
-            self.state = self._init_fn(x.shape[1:], *args, **kwargs)
+            self.state = self._init_fn(x.shape[1:], rng)
         loss, self.state = self._update(state=self.state,
                                             x=x,
                                             y=y)
