@@ -4,10 +4,10 @@ from .utils import random_key
 
 
 def net(layers):
-    def _init(n_in, *args, **kwargs):
+    def _init(n_in, rng=random_key()):
         state = []
         for init, _ in layers:
-            n_in, _state = init(n_in, *args, **kwargs)
+            n_in, _state = init(n_in, rng)
             state.append(_state)
         return state
 
@@ -20,7 +20,7 @@ def net(layers):
 
 
 def relu():
-    def _init(n_in, *args, **kwargs):
+    def _init(n_in, rng):
         return n_in, dict()
 
     def _call(state, x):
@@ -30,15 +30,18 @@ def relu():
 
 
 def flatten():
-    def _init(n_in, *args, **kwargs):
-        return n_in, dict()
+    def _init(n_in, rng):
+        n_out = n_in
+        if isinstance(n_in, tuple):
+            n_out = sum(n_in)
+        return n_out, dict()
 
     def _call(state, x):
         return state, jnp.reshape(x, (x.shape[0], sum(x.shape[1:])))
 
 
 def dense(n_out):
-    def _init(n_in, rng=random_key()):
+    def _init(n_in, rng):
         if isinstance(n_in, tuple):
             n_in = sum(n_in)
         w_key, b_key = jax.random.split(rng)
