@@ -16,7 +16,6 @@ def net(layers):
     def _init(n_in, rng):
         state = []
         for init, _ in layers:
-            print(f"n_in: {n_in}")
             n_in, _state = init(n_in, rng)
             state.append(_state)
         return state
@@ -67,7 +66,8 @@ def sortmax():
         return n_in, ()
 
     def _call(state, x):
-        exp = jnp.exp(x)
+        x_max = jnp.max(x, axis=1, keepdims=True)
+        exp = jnp.exp(x - jax.lax.stop_gradient(x_max))
         return state, exp / jnp.sum(exp, axis=1, keepdims=True)
 
     return _init, _call

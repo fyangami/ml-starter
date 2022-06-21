@@ -11,12 +11,8 @@ def mean_squared_error():
 
 def categorical_cross_entropy():
     def _call(y_hat, y):
-        one_hot_y = jax.nn.one_hot(y, jnp.max(y) + 1)
-        return -jnp.mean(one_hot_y * jnp.log(y_hat))
-
+        y_hat = jnp.clip(y_hat, 1e-9, 1.)
+        y = jax.nn.one_hot(y, y_hat.shape[-1])
+        return -jnp.mean(jnp.sum(y * jnp.log(y_hat), axis=1))
     return _call
 
-
-def _softmax(logits):
-    exp = jnp.exp(logits)
-    return exp / jnp.sum(exp, axis=1, keepdims=True)
