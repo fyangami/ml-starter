@@ -17,6 +17,9 @@ def _flatten_dim(dim):
     return dim
 
 
+_expand_2d = lambda w: [w, w] if isinstance(w, int) else w
+
+
 def net(layers):
 
     def _init(n_in, rng):
@@ -156,15 +159,8 @@ def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
 
 
 def conv2d_old(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
-    if isinstance(strides, int):
-        _strides = (strides, strides)
-    else:
-        _strides = strides
-    if isinstance(kernel_size, int):
-        _kernel_size = [kernel_size, kernel_size]
-    else:
-        _kernel_size = kernel_size
-    assert len(_kernel_size) == 2
+    _kernel_size = _expand_2d(kernel_size)
+    _strides = _expand_2d(strides)
 
     def _init(n_in, rng):
 
@@ -239,23 +235,32 @@ def _conv2d(x, kernel, strides, padding):
     return convd
 
 
-def maxpool():
+def _reduce_window2d(window, strides, padding, init_val, op):
+    _window = _expand_2d(window)
+    _strides = _expand_2d(strides)
 
     def _init(n_in, rng):
-        pass
+        n_out = jax.lax.reduce_window_shape_tuple(operand_shape=n_in,
+                                                  window_dimensions=_window,
+                                                  window_strides=_strides,
+                                                  padding=padding)
+        return n_out, ()
 
     def _call(state, x, **kwargs):
-        pass
+        return state, jax.lax.reduce_window(operand=x,
+                                            init_value=init_val,
+                                            window_dilation=_window,
+                                            window_strides=_strides,
+                                            padding=padding,
+                                            computation=op)
 
     return _init, _call
 
 
-def avgpool():
+def maxpool2d(window, strides, padding='SAME'):
+    return _reduce_window2d(window,
+                            strides,
+                            padding,
+                            init_val=-jnp.inf,
+                            op=jax.lax.max)
 
-    def _init(n_in, rng):
-        pass
-
-    def _call(state, x, **kwargs):
-        pass
-
-    return _init, _call
