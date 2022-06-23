@@ -1,6 +1,11 @@
+from functools import partial
 import jax
 from jax import numpy as jnp
 from . import utils
+
+
+def _normal(rng, shape, stddev=1e-3):
+    return jax.random.normal(rng, shape) * stddev
 
 
 def _flatten_dim(dim):
@@ -13,6 +18,7 @@ def _flatten_dim(dim):
 
 
 def net(layers):
+
     def _init(n_in, rng):
         state = []
         for init, _ in layers:
@@ -21,52 +27,58 @@ def net(layers):
             state.append(_state)
         return state
 
-    def _call(state, x):
+    def _call(state, x, rng=None, training=True):
+        rng = rng or utils.random_key()
         for (_, call), _state in zip(layers, state):
-            _, x = call(_state, x)
+            rng, _ = jax.random.split(rng)
+            _, x = call(_state, x, rng=rng, training=training)
         return state, x
 
     return _init, _call
 
 
 def relu():
+
     def _init(n_in, rng):
         return n_in, ()
 
-    def _call(state, x):
+    def _call(state, x, **kwargs):
         return state, jnp.maximum(x, 0)
 
     return _init, _call
 
 
 def flatten():
+
     def _init(n_in, rng):
         return _flatten_dim(n_in), ()
 
-    def _call(state, x):
+    def _call(state, x, **kwargs):
         return state, jnp.reshape(x, (x.shape[0], _flatten_dim(x.shape[1:])))
 
     return _init, _call
 
 
 def dense(n_out):
+
     def _init(n_in, rng):
         n_in = _flatten_dim(n_in)
         w_key, b_key = jax.random.split(rng)
-        return n_out, dict(w=jax.random.normal(w_key, (n_in, n_out)),
-                           b=jax.random.normal(b_key, (n_out, )))
+        return n_out, dict(w=_normal(w_key, (n_in, n_out)),
+                           b=_normal(b_key, (n_out, )))
 
-    def _call(state, x):
+    def _call(state, x, **kwargs):
         return state, x @ state['w'] + state['b']
 
     return _init, _call
 
 
 def softmax():
+
     def _init(n_in, rng):
         return n_in, ()
 
-    def _call(state, x):
+    def _call(state, x, **kwargs):
         x_max = jnp.max(x, axis=1, keepdims=True)
         exp = jnp.exp(x - jax.lax.stop_gradient(x_max))
         return state, exp / jnp.sum(exp, axis=1, keepdims=True)
@@ -74,31 +86,35 @@ def softmax():
     return _init, _call
 
 
-def log_softmax():
+def dropout(threshold=.5):
+
     def _init(n_in, rng):
         return n_in, ()
-    
-    def _call(state, x):
-        x_max = jnp.max(x, axis=1, keepdims=True)
-        shifted = x - jax.lax.stop_gradient(x_max)
-        shifted_logsumexp = jnp.log(jnp.sum(jnp.exp(shifted), axis=1, keepdims=True))
-        return state, shifted - shifted_logsumexp
+
+    def _call(state, x, **kwargs):
+        training = kwargs.get('training', False)
+        if not training:
+            return state, x
+        rng = kwargs['rng']
+        filter = jax.random.bernoulli(rng, shape=x.shape)
+        return state, jnp.where(filter, x / threshold, 0)
+
     return _init, _call
 
-# def dropout(threshold=.5):
-    
-#     def _init(n_in, rng):
-#         return n_in, ()
-    
-#     def _call(state, x):
-#         n = _flatten_dim(x.shape)
-#         zero_n = int(n * threshold)
-#         proceed_n = n - zero_n
-#         filter = jnp.stack([jnp.zeros(zero_n), jnp.ones(proceed_n)])
-#         jax.random.permutation(rng, x)
-#         return state, jnp.reshape(filter, x.shape) * x
-    
-#     return _init, _call
+
+def log_softmax():
+
+    def _init(n_in, rng):
+        return n_in, ()
+
+    def _call(state, x, **kwargs):
+        x_max = jnp.max(x, axis=1, keepdims=True)
+        shifted = x - jax.lax.stop_gradient(x_max)
+        shifted_logsumexp = jnp.log(
+            jnp.sum(jnp.exp(shifted), axis=1, keepdims=True))
+        return state, shifted - shifted_logsumexp
+
+    return _init, _call
 
 
 def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
@@ -117,24 +133,24 @@ def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
         state = dict()
         kernel_input = 1 if len(n_in) < 3 else n_in[-1]
         w_rng, b_rng = jax.random.split(rng)
-        state['w'] = jax.random.normal(w_rng,
-                                       shape=(*_kernel_size, kernel_input,
-                                              n_filter))
-        state['b'] = jax.random.normal(b_rng, shape=(n_filter,))
+        state['w'] = _normal(w_rng,
+                             shape=(*_kernel_size, kernel_input, n_filter))
+        state['b'] = _normal(b_rng, shape=(n_filter, ))
         n_out = (out_h, out_w, n_filter)
         return n_out, state
 
-    def _call(state, x):
+    def _call(state, x, **kwargs):
         if len(x.shape) == 3:
             x = x[:, :, :, None]
         if len(x.shape) == 2:
             x = x[None, :, :, None]
         kernel = state['w']
-        return state, jax.lax.conv_general_dilated(lhs=x,
-                                                   rhs=kernel,
-                                                   window_strides=_strides,
-                                                   padding=padding,
-                                                   dimension_numbers=('NHWC', 'HWIO', 'NHWC')) + state['b']
+        return state, jax.lax.conv_general_dilated(
+            lhs=x,
+            rhs=kernel,
+            window_strides=_strides,
+            padding=padding,
+            dimension_numbers=('NHWC', 'HWIO', 'NHWC')) + state['b']
 
     return _init, _call
 
@@ -173,6 +189,7 @@ def conv2d_old(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
 
 
 def _conv2d(x, kernel, strides, padding):
+
     def _conv_single(x, kernel):
         # x.shape=w, h
         sh, sw = strides
@@ -223,20 +240,22 @@ def _conv2d(x, kernel, strides, padding):
 
 
 def maxpool():
+
     def _init(n_in, rng):
         pass
 
-    def _call(state, x):
+    def _call(state, x, **kwargs):
         pass
 
     return _init, _call
 
 
 def avgpool():
+
     def _init(n_in, rng):
         pass
 
-    def _call(state, x):
+    def _call(state, x, **kwargs):
         pass
 
     return _init, _call

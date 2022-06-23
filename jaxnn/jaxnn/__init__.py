@@ -3,5 +3,6 @@ from jaxnn import optimizers as optimizers
 from jaxnn import utils as utils
 from jaxnn import model as model
 from jaxnn import loss as loss
+from jaxnn import dataset as dataset
 
-from .model import Model
+from .model import Model as Model
