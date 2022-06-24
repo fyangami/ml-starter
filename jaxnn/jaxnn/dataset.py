@@ -1,13 +1,11 @@
-import random
+from argparse import ArgumentError
 from urllib.request import urlretrieve
 import zipfile
 from mnist import train_images, train_labels, test_images, test_labels
-from jax import numpy as jnp
-import jax
-from jaxnn import utils
 import os
-import re
 from PIL import Image
+from multiprocessing import Pool, Manager
+import numpy as np
 
 DATA_SET_BASE_DIR = '/tmp/jaxnn_datasets/'
 
@@ -20,13 +18,28 @@ DATASETS = {
 }
 
 
+def load_img(pack):
+    (container, _index, resizer) = pack
+    img = container[_index]
+    if isinstance(img, str):
+        img = Image.open(img).resize(resizer)
+        img = np.array(img)
+    container[_index] = img
+    return img
+
+
+def _yield(obj):
+    while True:
+        yield obj
+
+
 def _path_reveal(filename):
     if not os.path.exists(DATA_SET_BASE_DIR):
         os.makedirs(DATA_SET_BASE_DIR)
     return DATA_SET_BASE_DIR + filename
 
 
-def mnist_dataloader(rng=utils.random_key(),
+def mnist_dataloader(seed=None,
                      batch_size=50,
                      repeat=True,
                      valid_ratio=.2,
@@ -36,116 +49,132 @@ def mnist_dataloader(rng=utils.random_key(),
     return _dataloader(x=train_images(),
                        y=train_labels(),
                        batch_size=batch_size,
-                       rng=rng,
+                       seed=seed,
                        repeat=repeat,
                        valid_ratio=valid_ratio,
                        map_fn=map_fn)
 
 
-def _dataloader(x, y, batch_size, repeat, valid_ratio, map_fn, rng):
+def _dataloader(x, y, batch_size, repeat, valid_ratio, map_fn, seed):
     valid_len = int(valid_ratio * x.shape[0])
+    indicates = np.arange(len(x))
+    if seed:
+        np.random.seed(seed)
+    np.random.shuffle(indicates)
+    x = x[indicates]
+    y = y[indicates]
+    valid_x = x[:valid_len]
+    valid_y = y[:valid_len]
     while True:
-        shuffled_x = jax.random.permutation(rng, x, axis=0)
-        shuffled_y = jax.random.permutation(rng, y, axis=0)
-        valid_x = shuffled_x[:valid_len]
-        valid_y = shuffled_y[:valid_len]
-        if map_fn is not None:
-            shuffled_x = map_fn(shuffled_x)
+        if map_fn:
             valid_x = map_fn(valid_x)
-        yield _split(shuffled_x[valid_len:], shuffled_y[valid_len:], rng,
-                     batch_size), (valid_x, valid_y)
+        yield _split(x[valid_len:], y[valid_len:], batch_size,
+                     map_fn), (valid_x, valid_y)
         if not repeat:
             break
-        (rng, _) = jax.random.split(rng)
 
 
 def mnist_testdata():
     return test_images(), test_labels()
 
 
-def _get_file(remote_url, filename):
+_to_mb = lambda b: b / (1024 * 1024)
+
+
+def _get_file_dir(remote_url, filename):
     filename = _path_reveal(filename)
-    if os.path.exists(filename):
-        return open(filename, 'rb+')
-    urlretrieve(url=remote_url, filename=filename)
-    return open(filename, 'rb+')
+    if not os.path.exists(filename):
+
+        def _progress_log(blk_num, blk_size, total_size):
+            total_size = _to_mb(total_size)
+            cur = _to_mb(blk_num * blk_size)
+            print(f'\rdownloading: {cur:.2f}Mb\\{total_size:.2f}Mb', end='')
+
+        print('start download remote file.')
+        urlretrieve(url=remote_url,
+                    filename=filename,
+                    reporthook=_progress_log)
+        print('download done.')
+    zip_filename = filename
+    dir = filename.strip('.zip')
+    if not os.path.exists(dir):
+        zip_file = zipfile.ZipFile(zip_filename)
+        os.makedirs(dir)
+        print('start extract file.')
+        zip_file.extractall(dir)
+        print('extract file done.')
+    return dir
 
 
-def cat_and_dog_dataloader(size=(256, 256),
-                rng=utils.random_key(),
-                batch_size=50,
-                repeat=True,
-                valid_ratio=.2,
-                map_fn=None):
+def cat_and_dog_dataloader(
+    _type,
+    resize=(224, 224),
+    seed=None,
+    batch_size=50,
+    repeat=True,
+    valid_ratio=.2,
+    map_fn=None,
+):
+    _POOL = Pool()
+    _MGR = Manager()
     dataset = DATASETS['cat_and_dog']
-    file_data = _get_file(remote_url=dataset['url'],
-                          filename=dataset['filename'])
-    all = zipfile.ZipFile(file_data)
+    file_dir = _get_file_dir(remote_url=dataset['url'],
+                             filename=dataset['filename'])
 
-    def _load_data(all: zipfile.ZipFile):
-        dataset = [(re.compile(r'^train.*cat.*.jpg$'), []),
-                   (re.compile(r'^train.*dog.*.jpg$'), []),
-                   (re.compile(r'^test.*cat.*.jpg$'), []),
-                   (re.compile(r'^test.*dog.*.jpg$'), [])]
-        for fi in all.filelist:
-            for (matcher, coll) in dataset:
-                if matcher.match(fi.filename):
-                    coll.append(fi)
-                    # img = Image.open(all.open(fi))
-                    # img = jnp.array(img)
-                    # img = jax.image.resize(img, (*size, 3), method='nearest')
-                    # coll.append(img)
-        return (pair[1] for pair in dataset)
+    def _cat_all_img(path_suffix, coll):
+        img_path = file_dir + path_suffix
+        for img in os.listdir(img_path):
+            if img.endswith('.jpg'):
+                coll.append(img_path + os.sep + img)
+        return coll
 
-    train_cat, train_dog, test_cat, test_dog = _load_data(all)
-    train = train_cat + train_dog
-    x = jnp.arange(len(train_cat) + len(train_dog))
+    if _type == 'train':
+        cats = _cat_all_img('/training_set/training_set/cats', [])
+        dogs = _cat_all_img('/training_set/training_set/dogs', [])
+    elif _type == 'test':
+        valid_ratio = 0
+        cats = _cat_all_img('/test_set/test_set/cats', [])
+        dogs = _cat_all_img('/test_set/test_set/dogs', [])
+    else:
+        raise ArgumentError(_type, "_type must be either 'tarin' or 'test'")
+    y = np.concatenate(
+        (np.full(shape=(len(cats), ),
+                 fill_value=0), np.full(shape=(len(dogs), ), fill_value=1)))
+    x = np.arange(len(y))
+    train = _MGR.list()
+    train += cats
+    train += dogs
+    del cats, dogs
 
-    # x = jnp.stack((train_cat, train_dog))
-    y = jnp.concatenate((jnp.full(shape=(len(train_cat), ), fill_value=0),
-                   jnp.full(shape=(len(train_dog), ), fill_value=1)))
-    tx = jnp.arange(len(test_cat) + len(test_dog))
-    # tx = jnp.stack((test_cat, test_dog))
-    ty = jnp.concatenate(
-        (jnp.full(shape=(len(test_cat), ),
-                  fill_value=0), jnp.full(shape=(len(test_dog), ),
-                                          fill_value=1)))
+    def _lazy_map(_x_index):
+        xs = _POOL.map(load_img, zip(_yield(train), _x_index, _yield(resize)))
+        _x = np.stack(xs)
+        if map_fn:
+            _x = map_fn(_x)
+        return _x
 
-    del train_cat, train_dog, test_cat, test_dog
-    def _lazy_map(lazy_x):
-        xs = []
-        for i in lazy_x:
-            if isinstance(train[i], zipfile.ZipInfo):
-                img = Image.open(all.open(train[i]))
-                img = jnp.array(img)
-                img = jax.image.resize(img, (*size, 3), method='nearest')
-                train[i] = img
-            xs.append(train[i])
-        lazy_x = jnp.stack(xs)
-        if map_fn is not None:
-            lazy_x = map_fn(lazy_x)
-        return lazy_x
     return _dataloader(x=x,
                        y=y,
                        batch_size=batch_size,
-                       rng=rng,
+                       seed=seed,
                        repeat=repeat,
                        valid_ratio=valid_ratio,
-                       map_fn=_lazy_map), (tx, ty)
+                       map_fn=_lazy_map)
 
 
-def _split(x, y, rng, batch_size):
+def _split(x, y, batch_size, map_fn):
     all = len(x)
     n_batch = all // batch_size
     for i in range(n_batch):
         left = batch_size * i
         right = left + batch_size
         if right <= all:
-            yield x[left:right], y[left:right]
-    rng, _ = jax.random.split(rng)
+            batch_x, batch_y = x[left:right], y[left:right]
+            if map_fn:
+                batch_x = map_fn(batch_x)
+            yield batch_x, batch_y
 
 
 if __name__ == '__main__':
-    (train_iter, (tx, ty)) = cat_and_dog_dataloader()
-    (x, y) = next(train_iter)
-    print(x, y)
+    dataloader = cat_and_dog_dataloader('train')
+    (train_iter, (x, y)) = next(dataloader)
