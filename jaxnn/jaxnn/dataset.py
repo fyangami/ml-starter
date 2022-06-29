@@ -43,6 +43,9 @@ class ClassMap:
             return self.tags_map.get(keys)
         # elif isinstance(keys, int):
         return self.tags[keys]
+    
+    def __len__(self):
+        return len(self.tags)
 
 
 def load_img(pack):

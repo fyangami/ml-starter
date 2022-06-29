@@ -17,7 +17,7 @@ def _flatten_dim(dim):
     return dim
 
 
-_expand_2d = lambda w: [w, w] if isinstance(w, int) else w
+_expand_2d = lambda w: (w, w) if isinstance(w, int) else w
 
 
 def net(layers):
@@ -119,7 +119,6 @@ def log_softmax():
 
     return _init, _call
 
-
 def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
     if isinstance(strides, int):
         _strides = (strides, strides)
@@ -157,105 +156,28 @@ def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
 
     return _init, _call
 
-
-def conv2d_old(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
-    _kernel_size = _expand_2d(kernel_size)
-    _strides = _expand_2d(strides)
-
-    def _init(n_in, rng):
-
-        out_h, out_w = n_in[:2]
-        state = dict()
-        state['k'] = jax.random.normal(rng, shape=(*_kernel_size, n_filter))
-        n_out = (out_h, out_w, n_filter)
-        return n_out, state
-
-    def _call(state, x):
-        if len(x.shape) == 3:
-            x = x[:, :, :, None]
-        if len(x.shape) == 2:
-            x = x[None, :, :, None]
-        assert len(x.shape) == 4
-        return state, _conv2d(x=x,
-                              kernel=state['k'],
-                              strides=_strides,
-                              padding=padding)
-
-    return _init, _call
-
-
-def _conv2d(x, kernel, strides, padding):
-
-    def _conv_single(x, kernel):
-        # x.shape=w, h
-        sh, sw = strides
-        h, w = x.shape
-        kh, kw = kernel.shape
-        if padding == 'SAME':
-            hori = ((h * sh) - (h - kh + 1))
-            vert = ((w * sw) - (w - kw + 1))
-            left_padding = int(vert / 2)
-            right_padding = vert - left_padding
-            top_padding = int(hori / 2)
-            bottom_padding = hori - top_padding
-            x = jnp.concatenate([
-                jnp.zeros((x.shape[0], left_padding)), x,
-                jnp.zeros((x.shape[0], right_padding))
-            ],
-                                axis=1)
-            x = jnp.concatenate([
-                jnp.zeros((top_padding, x.shape[1])), x,
-                jnp.zeros((bottom_padding, x.shape[1]))
-            ],
-                                axis=0)
-            h, w = x.shape
-        output = []
-        for i in range(0, h - kh + 1, sh):
-            row = []
-            for j in range(0, w - kw + 1, sw):
-                row.append(jnp.sum(x[i:i + kh, j:j + kw] * kernel))
-            output.append(row)
-        return jnp.array(output)
-
-    def _conv_channels(x, kernel):
-        # x.shape = h,w,c   kernel.shape=h,w
-        convd = jax.vmap(_conv_single, in_axes=(2, None), out_axes=-1)(x,
-                                                                       kernel)
-        # convd.shape=h,w,c
-        return jnp.sum(convd, axis=-1)
-
-    def _conv_filters(x, kernel):
-        # x.shape = h,w,c kernel.shape=h,w,f
-        # convd.shape=h,w,c
-        convd = jax.vmap(_conv_channels, in_axes=(None, 2),
-                         out_axes=-1)(x, kernel)
-        return convd
-
-    convd = jax.vmap(_conv_filters, in_axes=(0, None))(x, kernel)
-    return convd
-
-
 def _reduce_window2d(window, strides, padding, init_val, op):
-    _window = _expand_2d(window)
-    _strides = _expand_2d(strides)
+    _window = _expand_2d(window) + (1,)
+    _strides = _expand_2d(strides) + (1,)
 
     def _init(n_in, rng):
+        padding_vals = jax.lax.padtype_to_pads(n_in, _window,
+                                    _strides, padding)
         n_out = jax.lax.reduce_window_shape_tuple(operand_shape=n_in,
                                                   window_dimensions=_window,
                                                   window_strides=_strides,
-                                                  padding=padding)
+                                                  padding=padding_vals)
         return n_out, ()
 
     def _call(state, x, **kwargs):
         return state, jax.lax.reduce_window(operand=x,
                                             init_value=init_val,
-                                            window_dilation=_window,
-                                            window_strides=_strides,
+                                            window_dimensions=(1,) + _window,
+                                            window_strides=(1,) + _strides,
                                             padding=padding,
                                             computation=op)
 
     return _init, _call
-
 
 def maxpool2d(window, strides, padding='SAME'):
     return _reduce_window2d(window,
