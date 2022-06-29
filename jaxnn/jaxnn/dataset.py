@@ -10,13 +10,14 @@ import numpy as np
 from xml.etree import ElementTree
 from multiprocessing import Lock
 
+from torch import fill_
 
-DATA_SET_BASE_DIR = '/tmp/jaxnn_datasets/'
+DATA_SET_BASE_DIR = os.environ['HOME'] + '/.jaxnn_datasets/'
 
 DATASETS = {
     'cat_and_dog': {
         'url':
-        'https://storage.googleapis.com/kaggle-data-sets/23777/30378/bundle/archive.zip?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=gcp-kaggle-com%40kaggle-161607.iam.gserviceaccount.com%2F20220623%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20220623T031634Z&X-Goog-Expires=259199&X-Goog-SignedHeaders=host&X-Goog-Signature=29c6467d49300db347b352e80eec5f53501c22a431e10d5a9d9e80d2f450e50471c3d4d2b5fc55c85d7d4643dd601df9c123b61eec2f0c962ccfd7a98acc2fb1ba741cea8a2f863004913cc7fbbf781d3deabe276a041479e5ed4936a9273483d926a6c4d433ea54de1be8d080da389975ab4f31e0f281430a55f7f49c30372faa7c343f60e7520d1eeba67aa3e05dd9fa39f279369c861b65eae0dcac6a4b71090e29b8315a69959ec01a2029f47a53f54a9242b787327d916785353934a0832daf1bef47996f9f3c13765d966f0ecdfed1767a7f62599b2fc0a000547e771f4c1c53b0bab4f63f25646cbc39cca442e2ae1f325697d04d6a8b4b73ef3a1725',
+        'https://storage.googleapis.com/kaggle-data-sets/23777/30378/bundle/archive.zip?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=gcp-kaggle-com%40kaggle-161607.iam.gserviceaccount.com%2F20220629%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20220629T071213Z&X-Goog-Expires=259199&X-Goog-SignedHeaders=host&X-Goog-Signature=90840093a05d6110febbe46c6b3891152f4547a69bff8d0b69a232ce945dd1292850e12a8ecdbabb4ac2c892ab3482c4496387a2b09d987b70c872df265497fea7cb2950d773908312eb6cf2dee44772b3351587bc423694293c6605206a63ebd14680f6b77d3e86fa4c574e279cb5b59bfec6a5a4f0abb22f00df8e8c57d74755349254edac43a5a06349c265083f98c26874fb2f8377ae286833a2fad594bb72a5153c7b401993d288fd8688769f2bd51247f8d1b67da2d48d7b26e50ac6f0830854e6f432c5d4b5a7e055ca10aca59c44b7dfbc5bc024fa4524e23e6f0a56ff89001a7bbf557eec1f9403050d6ffefba62213a5d62d7ecae0dcd0245d9287',
         'filename': 'cat-and-dog.zip'
     },
     'face_mask': {
@@ -26,13 +27,15 @@ DATASETS = {
     }
 }
 
+
 class ClassMap:
-    
-    def __init__(self, *args) -> None:
-        self.tags = ['background']
+    def __init__(self, *args, fill_none=True) -> None:
+        self.tags = []
+        if fill_none:
+            self.tags.append('none')
         self.tags += args
         self.tags_map = {tag: idx for idx, tag in enumerate(self.tags)}
-    
+
     def __getitem__(self, keys):
         if hasattr(keys, '__next__') or isinstance(keys, (tuple, list)):
             return [self.__getitem__(k) for k in keys]
@@ -40,6 +43,7 @@ class ClassMap:
             return self.tags_map.get(keys)
         # elif isinstance(keys, int):
         return self.tags[keys]
+
 
 def load_img(pack):
     (container, _index, resizer) = pack
@@ -62,23 +66,43 @@ def _path_reveal(filename):
     return DATA_SET_BASE_DIR + filename
 
 
-def mnist_dataloader(seed=None,
+def mnist_dataloader(_type,
+                     seed=None,
                      batch_size=50,
                      repeat=True,
                      valid_ratio=.2,
-                     map_fn=None,
                      *args,
                      **kwargs):
-    return _dataloader(x=train_images(),
-                       y=train_labels(),
+    cls_map = ClassMap('0',
+                       '1',
+                       '2',
+                       '3',
+                       '4',
+                       '5',
+                       '6',
+                       '7',
+                       '8',
+                       '9',
+                       '10',
+                       fill_none=False)
+    if _type == 'train':
+        x = train_images()
+        y = train_labels()
+    elif _type == 'test':
+        valid_ratio = 0.
+        x = test_images()
+        y = test_labels()
+    else:
+        raise ArgumentError()
+    return _dataloader(x=x / 255.,
+                       y=y,
                        batch_size=batch_size,
                        seed=seed,
                        repeat=repeat,
-                       valid_ratio=valid_ratio,
-                       map_fn=map_fn)
+                       valid_ratio=valid_ratio), cls_map
 
 
-def _dataloader(x, y, batch_size, repeat, valid_ratio, map_fn, seed):
+def _dataloader(x, y, batch_size, repeat, valid_ratio, seed):
     valid_len = int(valid_ratio * x.shape[0])
     indicates = np.arange(len(x))
     if seed:
@@ -89,10 +113,8 @@ def _dataloader(x, y, batch_size, repeat, valid_ratio, map_fn, seed):
     valid_x = x[:valid_len]
     valid_y = y[:valid_len]
     while True:
-        if map_fn:
-            valid_x = map_fn(valid_x)
-        yield _split(x[valid_len:], y[valid_len:], batch_size,
-                     map_fn), (valid_x, valid_y)
+        yield _split(x[valid_len:], y[valid_len:],
+                     batch_size), (valid_x, valid_y)
         if not repeat:
             break
 
@@ -129,63 +151,61 @@ def _get_file_dir(remote_url, filename):
     return dir
 
 
-def cat_and_dog_dataloader(
-    _type,
-    resize=(224, 224),
-    seed=None,
-    batch_size=50,
-    repeat=True,
-    valid_ratio=.2,
-    map_fn=None,
-):
-    _POOL = Pool()
-    _MGR = Manager()
+def cat_and_dog_dataloader(_type,
+                           resize=(224, 224),
+                           seed=None,
+                           batch_size=50,
+                           repeat=True,
+                           valid_ratio=.2):
     dataset = DATASETS['cat_and_dog']
     file_dir = _get_file_dir(remote_url=dataset['url'],
                              filename=dataset['filename'])
+    cls_map = ClassMap('cat', 'dog')
 
-    def _cat_all_img(path_suffix, coll):
+    def _cat_all_img(path_suffix):
+        locker = Lock()
+        coll = []
+
+        def _load_img(p):
+            img = Image.open(p).resize(resize)
+            img = np.array(img, dtype='float32') / 255.
+            try:
+                locker.acquire()
+                coll.append(img)
+            finally:
+                locker.release()
+
+        executor = ThreadPoolExecutor()
         img_path = file_dir + path_suffix
         for img in os.listdir(img_path):
             if img.endswith('.jpg'):
-                coll.append(img_path + os.sep + img)
-        return coll
+                # _load_img(img_path + os.sep + img)
+                executor.submit(_load_img, img_path + os.sep + img)
+        executor.shutdown()
+        return np.stack(coll)
 
     if _type == 'train':
-        cats = _cat_all_img('/training_set/training_set/cats', [])
-        dogs = _cat_all_img('/training_set/training_set/dogs', [])
+        cats = _cat_all_img('/training_set/training_set/cats')
+        dogs = _cat_all_img('/training_set/training_set/dogs')
     elif _type == 'test':
         valid_ratio = 0
         cats = _cat_all_img('/test_set/test_set/cats', [])
         dogs = _cat_all_img('/test_set/test_set/dogs', [])
     else:
         raise ArgumentError(_type, "_type must be either 'tarin' or 'test'")
+    x = np.concatenate((cats, dogs))
     y = np.concatenate(
-        (np.full(shape=(len(cats), ),
-                 fill_value=0), np.full(shape=(len(dogs), ), fill_value=1)))
-    x = np.arange(len(y))
-    train = _MGR.list()
-    train += cats
-    train += dogs
-    del cats, dogs
-
-    def _lazy_map(_x_index):
-        xs = _POOL.map(load_img, zip(_yield(train), _x_index, _yield(resize)))
-        _x = np.stack(xs)
-        if map_fn:
-            _x = map_fn(_x)
-        return _x
-
+        (np.full(shape=(len(cats), ), fill_value=cls_map['cat']),
+         np.full(shape=(len(dogs), ), fill_value=cls_map['dog'])))
     return _dataloader(x=x,
                        y=y,
                        batch_size=batch_size,
                        seed=seed,
                        repeat=repeat,
-                       valid_ratio=valid_ratio,
-                       map_fn=_lazy_map)
+                       valid_ratio=valid_ratio), cls_map
 
 
-def _split(x, y, batch_size, map_fn):
+def _split(x, y, batch_size):
     all = len(x)
     n_batch = all // batch_size
     for i in range(n_batch):
@@ -193,9 +213,8 @@ def _split(x, y, batch_size, map_fn):
         right = left + batch_size
         if right <= all:
             batch_x, batch_y = x[left:right], y[left:right]
-            if map_fn:
-                batch_x = map_fn(batch_x)
             yield batch_x, batch_y
+
 
 def _scale_bbox(bbox, ori, resize):
     ori_h, ori_w = ori
@@ -209,17 +228,11 @@ def _scale_bbox(bbox, ori, resize):
     return bbox
 
 
-def face_mask_dataloader(
-    resize=(256, 256),
-    seed=None,
-    batch_size=50,
-    repeat=True,
-    valid_ratio=.2,
-    map_fn=None,
-):
-
-    # _POOL = Pool()
-    # _MGR = Manager()
+def face_mask_dataloader(resize=(256, 256),
+                         seed=None,
+                         batch_size=50,
+                         repeat=True,
+                         valid_ratio=.2):
     dataset = DATASETS['face_mask']
     file_dir = _get_file_dir(remote_url=dataset['url'],
                              filename=dataset['filename'])
@@ -252,31 +265,36 @@ def face_mask_dataloader(
         label[:, 1::2] = label[:, 1::2] / resize[0]
         label[:, 2::2] = label[:, 2::2] / resize[1]
         return img, label
+
     imgs, labels = [], []
     max_n_label = [0]
     executor = ThreadPoolExecutor()
     locker = Lock()
-    def _execute(xf, img_col, label_col, lock):
+
+    def _execute(xf):
         try:
             img, label = _parse_anno(xf)
             try:
-                lock.acquire()
+                locker.acquire()
                 max_n_label[0] = max(label.shape[0], max_n_label[0])
-                img_col.append(img)
-                label_col.append(label)
+                imgs.append(img)
+                labels.append(label)
             finally:
-                lock.release()
+                locker.release()
         except Exception as e:
             print(e)
+
     for xf in os.listdir(annos):
-        executor.submit(_execute, xf, imgs, labels, locker)
+        executor.submit(_execute, xf)
         # _execute(xf, imgs, labels, locker)
     executor.shutdown()
     # fill labels
     for i, label in enumerate(labels):
         fill_require = max_n_label[0] - label.shape[0]
         if fill_require > 0:
-            fill = np.full((fill_require, label.shape[-1]), fill_value=-1., dtype='float32')
+            fill = np.full((fill_require, label.shape[-1]),
+                           fill_value=-1.,
+                           dtype='float32')
             labels[i] = np.concatenate((label, fill))
     imgs, labels = np.stack(imgs), np.stack(labels)
     return _dataloader(x=imgs,
@@ -284,11 +302,10 @@ def face_mask_dataloader(
                        batch_size=batch_size,
                        repeat=repeat,
                        valid_ratio=valid_ratio,
-                       map_fn=map_fn,
                        seed=seed), cls_map
 
 
 if __name__ == '__main__':
-    dataloader, cls_map = face_mask_dataloader()
+    dataloader, cls_map = mnist_dataloader('train')
     (train_iter, (x, y)) = next(dataloader)
     print(x.shape, y.shape)
