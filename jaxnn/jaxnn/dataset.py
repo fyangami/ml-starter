@@ -117,7 +117,7 @@ def _get_file_dir(remote_url, filename):
         urlretrieve(url=remote_url,
                     filename=filename,
                     reporthook=_progress_log)
-        print('download done.')
+        print('\ndownload done.')
     zip_filename = filename
     dir = filename.strip('.zip')
     if not os.path.exists(dir):
