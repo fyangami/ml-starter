@@ -1,4 +1,3 @@
-from functools import partial
 import jax
 from jax import numpy as jnp
 from . import utils
@@ -21,7 +20,6 @@ _expand_2d = lambda w: (w, w) if isinstance(w, int) else w
 
 
 def net(layers):
-
     def _init(n_in, rng):
         state = []
         for init, _ in layers:
@@ -41,7 +39,6 @@ def net(layers):
 
 
 def relu():
-
     def _init(n_in, rng):
         return n_in, ()
 
@@ -52,7 +49,6 @@ def relu():
 
 
 def flatten():
-
     def _init(n_in, rng):
         return _flatten_dim(n_in), ()
 
@@ -62,22 +58,25 @@ def flatten():
     return _init, _call
 
 
-def dense(n_out):
-
+def dense(n_out, initializer=None, with_bias=True):
     def _init(n_in, rng):
         n_in = _flatten_dim(n_in)
         w_key, b_key = jax.random.split(rng)
-        return n_out, dict(w=_normal(w_key, (n_in, n_out)),
-                           b=_normal(b_key, (n_out, )))
+        return n_out, dict(w=initializer(w_key, (n_in, n_out))
+                           if initializer else _normal(w_key, (n_in, n_out)),
+                           b=initializer(b_key, (n_out, )) if initializer else
+                           _normal(b_key, (n_out, )) if with_bias else None)
 
     def _call(state, x, **kwargs):
-        return state, x @ state['w'] + state['b']
+        x = x @ state['w']
+        if with_bias:
+            x = x + state['b']
+        return state, x
 
     return _init, _call
 
 
 def softmax():
-
     def _init(n_in, rng):
         return n_in, ()
 
@@ -90,7 +89,6 @@ def softmax():
 
 
 def dropout(threshold=.5):
-
     def _init(n_in, rng):
         return n_in, ()
 
@@ -106,7 +104,6 @@ def dropout(threshold=.5):
 
 
 def log_softmax():
-
     def _init(n_in, rng):
         return n_in, ()
 
@@ -119,7 +116,13 @@ def log_softmax():
 
     return _init, _call
 
-def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
+
+def conv2d(n_filter: int,
+           kernel_size,
+           strides=(1, 1),
+           padding='SAME',
+           initializer=None,
+           with_bias=True):
     if isinstance(strides, int):
         _strides = (strides, strides)
     else:
@@ -135,9 +138,14 @@ def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
         state = dict()
         kernel_input = 1 if len(n_in) < 3 else n_in[-1]
         w_rng, b_rng = jax.random.split(rng)
-        state['w'] = _normal(w_rng,
-                             shape=(*_kernel_size, kernel_input, n_filter))
-        state['b'] = _normal(b_rng, shape=(n_filter, ))
+        w_shape = (*_kernel_size, kernel_input, n_filter)
+        b_shape = (n_filter, )
+        state['w'] = initializer(w_rng, w_shape) if initializer else _normal(
+            w_rng, shape=w_shape)
+        if with_bias:
+            state['b'] = initializer(
+                b_rng, b_shape) if initializer else _normal(b_rng,
+                                                            shape=b_shape)
         n_out = (out_h, out_w, n_filter)
         return n_out, state
 
@@ -147,22 +155,26 @@ def conv2d(n_filter: int, kernel_size, strides=(1, 1), padding='SAME'):
         if len(x.shape) == 2:
             x = x[None, :, :, None]
         kernel = state['w']
-        return state, jax.lax.conv_general_dilated(
-            lhs=x,
-            rhs=kernel,
-            window_strides=_strides,
-            padding=padding,
-            dimension_numbers=('NHWC', 'HWIO', 'NHWC')) + state['b']
+        x = jax.lax.conv_general_dilated(lhs=x,
+                                         rhs=kernel,
+                                         window_strides=_strides,
+                                         padding=padding,
+                                         dimension_numbers=('NHWC', 'HWIO',
+                                                            'NHWC'))
+        if with_bias:
+            x = x + state['b']
+        return state, x
 
     return _init, _call
 
+
 def _reduce_window2d(window, strides, padding, init_val, op):
-    _window = _expand_2d(window) + (1,)
-    _strides = _expand_2d(strides) + (1,)
+    _window = _expand_2d(window) + (1, )
+    _strides = _expand_2d(strides) + (1, )
 
     def _init(n_in, rng):
-        padding_vals = jax.lax.padtype_to_pads(n_in, _window,
-                                    _strides, padding)
+        padding_vals = jax.lax.padtype_to_pads(n_in, _window, _strides,
+                                               padding)
         n_out = jax.lax.reduce_window_shape_tuple(operand_shape=n_in,
                                                   window_dimensions=_window,
                                                   window_strides=_strides,
@@ -172,17 +184,17 @@ def _reduce_window2d(window, strides, padding, init_val, op):
     def _call(state, x, **kwargs):
         return state, jax.lax.reduce_window(operand=x,
                                             init_value=init_val,
-                                            window_dimensions=(1,) + _window,
-                                            window_strides=(1,) + _strides,
+                                            window_dimensions=(1, ) + _window,
+                                            window_strides=(1, ) + _strides,
                                             padding=padding,
                                             computation=op)
 
     return _init, _call
 
-def maxpool2d(window, strides, padding='SAME'):
+
+def maxpool2d(window, strides, padding='VALID'):
     return _reduce_window2d(window,
                             strides,
                             padding,
                             init_val=-jnp.inf,
                             op=jax.lax.max)
-
