@@ -68,7 +68,7 @@ class Model:
         return loss, jax.tree_util.tree_map(self.optimizer, state, grads)
 
     def _forward(self, state, x, y):
-        _, y_ = self._call_fn(state, x)
+        y_ = self._call_fn(state, x)
         return self.loss_fn(y_, y)
     
     def accuracy(self, y_hat, y):
@@ -76,5 +76,5 @@ class Model:
         return jnp.sum(y == y_hat) / y_hat.shape[0]
 
     def predict(self, x):
-        _, y_hat = self._call_fn(self.state, x)
+        y_hat = self._call_fn(self.state, x)
         return y_hat

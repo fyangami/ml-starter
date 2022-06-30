@@ -163,7 +163,7 @@ def cat_and_dog_dataloader(_type,
     dataset = DATASETS['cat_and_dog']
     file_dir = _get_file_dir(remote_url=dataset['url'],
                              filename=dataset['filename'])
-    cls_map = ClassMap('cat', 'dog')
+    cls_map = ClassMap('cat', 'dog', fill_none=False)
 
     def _cat_all_img(path_suffix):
         locker = Lock()

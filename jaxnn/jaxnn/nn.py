@@ -20,9 +20,11 @@ _expand_2d = lambda w: (w, w) if isinstance(w, int) else w
 
 
 def net(layers):
+    
+    init_funcs, call_funcs = zip(*layers)
     def _init(n_in, rng):
         state = []
-        for init, _ in layers:
+        for init in init_funcs:
             n_in, _state = init(n_in, rng)
             rng, _ = jax.random.split(rng)
             state.append(_state)
@@ -30,10 +32,10 @@ def net(layers):
 
     def _call(state, x, rng=None, training=True):
         rng = rng or utils.random_key()
-        for (_, call), _state in zip(layers, state):
+        for call, _state in zip(call_funcs, state):
             rng, _ = jax.random.split(rng)
-            _, x = call(_state, x, rng=rng, training=training)
-        return state, x
+            x = call(_state, x, rng=rng, training=training)
+        return x
 
     return _init, _call
 
@@ -43,7 +45,7 @@ def relu():
         return n_in, ()
 
     def _call(state, x, **kwargs):
-        return state, jnp.maximum(x, 0)
+        return jnp.maximum(x, 0)
 
     return _init, _call
 
@@ -53,7 +55,7 @@ def flatten():
         return _flatten_dim(n_in), ()
 
     def _call(state, x, **kwargs):
-        return state, jnp.reshape(x, (x.shape[0], _flatten_dim(x.shape[1:])))
+        return jnp.reshape(x, (x.shape[0], _flatten_dim(x.shape[1:])))
 
     return _init, _call
 
@@ -71,7 +73,7 @@ def dense(n_out, initializer=None, with_bias=True):
         x = x @ state['w']
         if with_bias:
             x = x + state['b']
-        return state, x
+        return x
 
     return _init, _call
 
@@ -83,7 +85,7 @@ def softmax():
     def _call(state, x, **kwargs):
         x_max = jnp.max(x, axis=1, keepdims=True)
         exp = jnp.exp(x - jax.lax.stop_gradient(x_max))
-        return state, exp / jnp.sum(exp, axis=1, keepdims=True)
+        return exp / jnp.sum(exp, axis=1, keepdims=True)
 
     return _init, _call
 
@@ -98,7 +100,7 @@ def dropout(threshold=.5):
             return state, x
         rng = kwargs['rng']
         filter = jax.random.bernoulli(rng, shape=x.shape)
-        return state, jnp.where(filter, x / threshold, 0)
+        return jnp.where(filter, x / threshold, 0)
 
     return _init, _call
 
@@ -112,7 +114,7 @@ def log_softmax():
         shifted = x - jax.lax.stop_gradient(x_max)
         shifted_logsumexp = jnp.log(
             jnp.sum(jnp.exp(shifted), axis=1, keepdims=True))
-        return state, shifted - shifted_logsumexp
+        return shifted - shifted_logsumexp
 
     return _init, _call
 
@@ -163,7 +165,7 @@ def conv2d(n_filter: int,
                                                             'NHWC'))
         if with_bias:
             x = x + state['b']
-        return state, x
+        return x
 
     return _init, _call
 
@@ -182,7 +184,7 @@ def _reduce_window2d(window, strides, padding, init_val, op):
         return n_out, ()
 
     def _call(state, x, **kwargs):
-        return state, jax.lax.reduce_window(operand=x,
+        return jax.lax.reduce_window(operand=x,
                                             init_value=init_val,
                                             window_dimensions=(1, ) + _window,
                                             window_strides=(1, ) + _strides,
