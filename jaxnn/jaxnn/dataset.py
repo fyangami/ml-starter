@@ -5,12 +5,9 @@ import zipfile
 from mnist import train_images, train_labels, test_images, test_labels
 import os
 from PIL import Image
-from multiprocessing import Pool, Manager
 import numpy as np
 from xml.etree import ElementTree
 from multiprocessing import Lock
-
-from torch import fill_
 
 DATA_SET_BASE_DIR = os.environ['HOME'] + '/.jaxnn_datasets/'
 
@@ -120,10 +117,6 @@ def _dataloader(x, y, batch_size, repeat, valid_ratio, seed):
                      batch_size), (valid_x, valid_y)
         if not repeat:
             break
-
-
-def mnist_testdata():
-    return test_images(), test_labels()
 
 
 _to_mb = lambda b: b / (1024 * 1024)

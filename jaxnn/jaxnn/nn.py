@@ -3,10 +3,6 @@ from jax import numpy as jnp
 from . import utils
 
 
-def _normal(rng, shape, stddev=1e-3):
-    return jax.random.normal(rng, shape) * stddev
-
-
 def _flatten_dim(dim):
     if not isinstance(dim, int):
         flatten_dim = 1
@@ -15,6 +11,15 @@ def _flatten_dim(dim):
         dim = flatten_dim
     return dim
 
+def _normal(rng, shape, stddev=1e-7):
+    return jax.random.normal(rng, shape) * stddev
+
+
+def xavier_normal(rng, shape, stddev=1e-4):
+    # 3 3 3 64
+    w = jax.random.normal(rng, shape) * stddev
+    n_in = _flatten_dim(shape[:-1])
+    return w / jnp.sqrt(n_in / 2)
 
 _expand_2d = lambda w: (w, w) if isinstance(w, int) else w
 
@@ -39,6 +44,15 @@ def net(layers):
 
     return _init, _call
 
+
+def leaky_relu(alpha=.3):
+    def _init(n_in, rng):
+        return n_in, ()
+    
+    def _call(state, x, **kwargs):
+        return jnp.where(x >= 0, x, alpha * x)
+    
+    return _init, _call
 
 def relu():
     def _init(n_in, rng):
