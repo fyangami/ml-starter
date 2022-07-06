@@ -11,5 +11,5 @@
     "python.testing.unittestEnabled": true,
     "jupyter.debugJustMyCode": false,
     "python.testing.cwd": "../jaxnn/",
-    "python.analysis.extraPaths": ["../jaxnn/", "./jaxnn"]
+    "python.analysis.extraPaths": ["../jaxnn/", "./jaxnn", "./"]
 }
