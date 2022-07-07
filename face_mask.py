@@ -1,10 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Lock
 import os
-from tkinter import Image
+from PIL import Image
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 import zipfile
+import numpy
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -113,7 +114,9 @@ def face_mask_dataloader(resize=(256, 256),
         ori_w = int(fsize.find('width').text)
         img = Image.open(file_dir + os.sep + 'images' + os.sep +
                          fname).resize(resize).convert('RGB')
-        img = torch.tensor(img, dtype='float32') / 255.
+        img = numpy.array(img, dtype='float32') / 255.
+        img = torch.tensor(img)
+        img = torch.permute(img, (2, 0, 1))
         _labels, _bboxes = [], []
         for obj in root.findall('object'):
             bbox = obj.find('bndbox')
@@ -125,9 +128,9 @@ def face_mask_dataloader(resize=(256, 256),
                 int(bbox.find('ymax').text)
             ]
             _bboxes.append(box)
-        _bboxes = torch.tensor(_bboxes, dtype='float32')
+        _bboxes = torch.tensor(_bboxes, dtype=torch.float32)
         _bboxes = _scale_bbox(_bboxes, (ori_h, ori_w), resize)
-        _labels = torch.tensor(_labels, dtype='float32')
+        _labels = torch.tensor(_labels, dtype=torch.int32)
         return img, _bboxes, _labels
 
     imgs, targets = [], []
@@ -152,5 +155,18 @@ def face_mask_dataloader(resize=(256, 256),
 
     for xf in os.listdir(annos):
         executor.submit(_execute, xf)
+        # _execute(xf)
     executor.shutdown()
-    return DataLoader(_Dataset(imgs=imgs, targets=targets), shuffle=True, batch_size=batch_size)
+    def _collate_fn(batch):
+        x, y = [], []
+        for img, target in batch:
+            x.append(img)
+            y.append(target)
+        return torch.stack(x, dim=0), y
+    return iter(DataLoader(_Dataset(imgs=imgs, targets=targets), shuffle=True, batch_size=batch_size, collate_fn=_collate_fn))
+
+
+if __name__ == '__main__':
+    data = face_mask_dataloader(batch_size=10)
+    x, y = next(data)
+    print(x)
